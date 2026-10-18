@@ -11,9 +11,7 @@ const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // this is the newly added code to allow multiple origins for CORS - xoxo Kiera
 const allowedOrigins = new Set(
-  (
-    process.env.CORS_ORIGIN ?? "http://localhost:5173,http://localhost:5174"
-  )
+  (process.env.CORS_ORIGIN ?? "http://localhost:5173,http://localhost:5174")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean),
@@ -22,7 +20,7 @@ if (process.env.NODE_ENV !== "production") {
   allowedOrigins.add("http://localhost:5173");
   allowedOrigins.add("http://localhost:5174");
 }
-app.options("*", cors());
+
 app.use(
   cors({
     origin: (origin, callback) => {
