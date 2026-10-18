@@ -22,7 +22,7 @@ if (process.env.NODE_ENV !== "production") {
   allowedOrigins.add("http://localhost:5173");
   allowedOrigins.add("http://localhost:5174");
 }
-
+app.options("*", cors());
 app.use(
   cors({
     origin: (origin, callback) => {
