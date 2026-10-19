@@ -81,7 +81,7 @@ app.get("/api/health", async (_request, response, next) => {
 app.get("/api/tasks", async (_request, response, next) => {
   try {
     const [tasks] = await pool.query(
-      "SELECT id, title, description, status, created_at, updated_at FROM tasks ORDER BY created_at DESC, id DESC",
+      "SELECT id, title, description, status, CONVERT(char(19), created_at, 120) AS created_at, CONVERT(char(19), updated_at, 120) AS updated_at FROM tasks ORDER BY tasks.created_at DESC, id DESC",
     );
     response.json(tasks);
   } catch (error) {
@@ -98,9 +98,10 @@ app.post("/api/tasks", async (request, response, next) => {
       "INSERT INTO tasks (title, description, status) VALUES (?, ?, ?)",
       [result.value.title, result.value.description, result.value.status],
     );
-    const [rows] = await pool.execute("SELECT * FROM tasks WHERE id = ?", [
-      insert.insertId,
-    ]);
+    const [rows] = await pool.execute(
+      "SELECT id, title, description, status, CONVERT(char(19), created_at, 120) AS created_at, CONVERT(char(19), updated_at, 120) AS updated_at FROM tasks WHERE id = ?",
+      [insert.insertId],
+    );
     response.status(201).json(rows[0]);
   } catch (error) {
     next(error);
@@ -119,13 +120,16 @@ app.put("/api/tasks/:id", async (request, response, next) => {
 
   try {
     const [update] = await pool.execute(
-      "UPDATE tasks SET title = ?, description = ?, status = ? WHERE id = ?",
+      "UPDATE tasks SET title = ?, description = ?, status = ?, updated_at = SYSUTCDATETIME() WHERE id = ?",
       [result.value.title, result.value.description, result.value.status, id],
     );
     if (update.affectedRows === 0)
       return response.status(404).json({ error: "Task not found." });
 
-    const [rows] = await pool.execute("SELECT * FROM tasks WHERE id = ?", [id]);
+    const [rows] = await pool.execute(
+      "SELECT id, title, description, status, CONVERT(char(19), created_at, 120) AS created_at, CONVERT(char(19), updated_at, 120) AS updated_at FROM tasks WHERE id = ?",
+      [id],
+    );
     response.json(rows[0]);
   } catch (error) {
     next(error);

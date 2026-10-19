@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 import { promisify } from "node:util";
 import express from "express";
-import pool from "./db.js";
+import pool, { isDuplicateKeyError } from "./db.js";
 
 const router = express.Router();
 const scrypt = promisify(scryptCallback);
@@ -34,9 +34,9 @@ async function userFromSession(request) {
   if (!token) return null;
   const [rows] = await pool.execute(
     `SELECT users.id, users.name, users.email, users.role,
-       users.profile_image_mime IS NOT NULL AS hasProfileImage
+       CASE WHEN users.profile_image_mime IS NOT NULL THEN 1 ELSE 0 END AS hasProfileImage
      FROM sessions JOIN users ON users.id = sessions.user_id
-     WHERE sessions.token_hash = ? AND sessions.expires_at > UTC_TIMESTAMP()`,
+     WHERE sessions.token_hash = ? AND sessions.expires_at > SYSUTCDATETIME()`,
     [hashToken(token)],
   );
   if (!rows[0]) return null;
@@ -256,7 +256,7 @@ router.post("/auth/signup", async (request, response, next) => {
     );
     const [users] = await pool.execute(
       `SELECT id, name, email, role,
-       profile_image_mime IS NOT NULL AS hasProfileImage
+       CASE WHEN profile_image_mime IS NOT NULL THEN 1 ELSE 0 END AS hasProfileImage
        FROM users WHERE id = ?`,
       [insert.insertId],
     );
@@ -273,7 +273,7 @@ router.post("/auth/signup", async (request, response, next) => {
       },
     });
   } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
+    if (isDuplicateKeyError(error)) {
       return response
         .status(409)
         .json({ error: "An account with that email already exists." });
@@ -294,7 +294,9 @@ router.post("/auth/login", async (request, response, next) => {
       .json({ error: "Enter your email and password." });
   }
   try {
-    const [users] = await pool.execute("SELECT * FROM users WHERE email = ?", [
+    const [users] = await pool.execute(
+      "SELECT id, name, email, role, password_hash, profile_image_mime FROM users WHERE email = ?",
+      [
       email,
     ]);
     const user = users[0];
@@ -384,8 +386,8 @@ router.patch("/auth/profile", requireAuthenticated, async (request, response, ne
       : null;
     await pool.execute(
       `UPDATE users SET name = ?, email = ?, password_hash = COALESCE(?, password_hash),
-       profile_image = IF(?, ?, profile_image),
-       profile_image_mime = IF(?, ?, profile_image_mime)
+       profile_image = CASE WHEN ? = 1 THEN ? ELSE profile_image END,
+       profile_image_mime = CASE WHEN ? = 1 THEN ? ELSE profile_image_mime END
        WHERE id = ?`,
       [
         name,
@@ -412,7 +414,7 @@ router.patch("/auth/profile", requireAuthenticated, async (request, response, ne
       },
     });
   } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
+    if (isDuplicateKeyError(error)) {
       return response.status(409).json({ error: "An account with that email already exists." });
     }
     next(error);
@@ -455,7 +457,7 @@ router.get("/animals", optionalUser, async (request, response, next) => {
   try {
     const [animals] = await pool.query(
       `SELECT id, name, type, breed, age, description, status, image_key AS imageKey,
-       IF(image_data IS NULL, NULL, CONCAT('/api/animals/', id, '/image')) AS imageUrl
+       CASE WHEN image_data IS NULL THEN NULL ELSE CONCAT('/api/animals/', id, '/image') END AS imageUrl
        FROM animals ${request.user?.role === "staff" ? "" : "WHERE status = 'Available' "}
        ORDER BY created_at DESC, id DESC`,
     );
@@ -473,7 +475,7 @@ router.get("/animals/:id/image", optionalUser, async (request, response, next) =
   try {
     const [rows] = await pool.execute(
       `SELECT image_data, image_mime FROM animals
-       WHERE id = ? AND (status = 'Available' OR ?)`,
+       WHERE id = ? AND (status = 'Available' OR ? = 1)`,
       [id, request.user?.role === "staff"],
     );
     if (!rows[0]?.image_data) {
@@ -510,7 +512,7 @@ router.post("/animals", requireStaff, async (request, response, next) => {
     );
     const [rows] = await pool.execute(
       `SELECT id, name, type, breed, age, description, status, image_key AS imageKey,
-       IF(image_data IS NULL, NULL, CONCAT('/api/animals/', id, '/image')) AS imageUrl
+       CASE WHEN image_data IS NULL THEN NULL ELSE CONCAT('/api/animals/', id, '/image') END AS imageUrl
        FROM animals WHERE id = ?`,
       [insert.insertId],
     );
@@ -530,7 +532,9 @@ router.patch("/animals/:id", requireStaff, async (request, response, next) => {
     const animal = result.value;
     const [update] = await pool.execute(
       `UPDATE animals SET name = ?, type = ?, breed = ?, age = ?, description = ?, status = ?, image_key = ?,
-       image_data = IF(?, ?, image_data), image_mime = IF(?, ?, image_mime)
+       image_data = CASE WHEN ? = 1 THEN ? ELSE image_data END,
+       image_mime = CASE WHEN ? = 1 THEN ? ELSE image_mime END,
+       updated_at = SYSUTCDATETIME()
        WHERE id = ?`,
       [
         animal.name,
@@ -551,7 +555,7 @@ router.patch("/animals/:id", requireStaff, async (request, response, next) => {
       return response.status(404).json({ error: "Animal not found." });
     const [rows] = await pool.execute(
       `SELECT id, name, type, breed, age, description, status, image_key AS imageKey,
-       IF(image_data IS NULL, NULL, CONCAT('/api/animals/', id, '/image')) AS imageUrl
+       CASE WHEN image_data IS NULL THEN NULL ELSE CONCAT('/api/animals/', id, '/image') END AS imageUrl
        FROM animals WHERE id = ?`,
       [id],
     );
@@ -580,8 +584,8 @@ router.delete("/animals/:id", requireStaff, async (request, response, next) => {
 router.get("/events", requireStaff, async (_request, response, next) => {
   try {
     const [events] = await pool.query(
-      `SELECT id, title, DATE_FORMAT(event_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(event_time, '%H:%i') AS time, kind, notes
+      `SELECT id, title, CONVERT(char(10), event_date, 23) AS date,
+       CONVERT(char(5), event_time, 108) AS time, kind, notes
        FROM shelter_events ORDER BY event_date, event_time, id`,
     );
     response.json(events);
@@ -649,8 +653,8 @@ router.delete("/events/:id", requireStaff, async (request, response, next) => {
 router.get("/availability", requireStaff, async (_request, response, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT DATE_FORMAT(available_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(available_time, '%H:%i') AS time
+      `SELECT CONVERT(char(10), available_date, 23) AS date,
+       CONVERT(char(5), available_time, 108) AS time
        FROM availability ORDER BY available_date`,
     );
     response.json(rows);
@@ -684,8 +688,16 @@ router.put(
     }
     try {
       await pool.execute(
-        `INSERT INTO availability (available_date, available_time, updated_by)
-       VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE available_time = VALUES(available_time), updated_by = VALUES(updated_by)`,
+        `MERGE availability WITH (HOLDLOCK) AS target
+         USING (SELECT CAST(? AS DATE) AS available_date, CAST(? AS TIME(0)) AS available_time, ? AS updated_by) AS source
+         ON target.available_date = source.available_date
+         WHEN MATCHED THEN UPDATE SET
+           available_time = source.available_time,
+           updated_by = source.updated_by,
+           updated_at = SYSUTCDATETIME()
+         WHEN NOT MATCHED THEN
+           INSERT (available_date, available_time, updated_by)
+           VALUES (source.available_date, source.available_time, source.updated_by);`,
         [date, time, request.user.id],
       );
       response.json({ date, time });
@@ -698,12 +710,12 @@ router.put(
 router.get("/site-visits/availability", async (_request, response, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT DATE_FORMAT(availability.available_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(availability.available_time, '%H:%i') AS time
+      `SELECT CONVERT(char(10), availability.available_date, 23) AS date,
+       CONVERT(char(5), availability.available_time, 108) AS time
        FROM availability
        LEFT JOIN site_visits ON site_visits.visit_date = availability.available_date
-       WHERE (availability.available_date > UTC_DATE() OR
-         (availability.available_date = UTC_DATE() AND availability.available_time > UTC_TIME()))
+       WHERE (availability.available_date > CAST(SYSUTCDATETIME() AS DATE) OR
+         (availability.available_date = CAST(SYSUTCDATETIME() AS DATE) AND availability.available_time > CAST(SYSUTCDATETIME() AS TIME)))
          AND site_visits.id IS NULL
        ORDER BY availability.available_date`,
     );
@@ -717,11 +729,11 @@ router.get("/site-visits", requireStaff, async (_request, response, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT site_visits.id,
-       DATE_FORMAT(site_visits.visit_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(site_visits.visit_time, '%H:%i') AS time,
+       CONVERT(char(10), site_visits.visit_date, 23) AS date,
+       CONVERT(char(5), site_visits.visit_time, 108) AS time,
        users.name, users.email
        FROM site_visits JOIN users ON users.id = site_visits.user_id
-       WHERE site_visits.visit_date >= UTC_DATE()
+       WHERE site_visits.visit_date >= CAST(SYSUTCDATETIME() AS DATE)
        ORDER BY site_visits.visit_date, site_visits.visit_time`,
     );
     response.json(rows);
@@ -733,9 +745,9 @@ router.get("/site-visits", requireStaff, async (_request, response, next) => {
 router.get("/site-visits/mine", requireAuthenticated, async (request, response, next) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(visit_time, '%H:%i') AS time
-       FROM site_visits WHERE user_id = ? AND visit_date >= UTC_DATE()
+      `SELECT id, CONVERT(char(10), visit_date, 23) AS date,
+       CONVERT(char(5), visit_time, 108) AS time
+       FROM site_visits WHERE user_id = ? AND visit_date >= CAST(SYSUTCDATETIME() AS DATE)
        ORDER BY visit_date`,
       [request.user.id],
     );
@@ -758,21 +770,21 @@ router.post("/site-visits", requireAuthenticated, async (request, response, next
       `INSERT INTO site_visits (user_id, visit_date, visit_time)
        SELECT ?, available_date, available_time FROM availability
        WHERE available_date = ? AND
-         (available_date > UTC_DATE() OR
-           (available_date = UTC_DATE() AND available_time > UTC_TIME()))`,
+         (available_date > CAST(SYSUTCDATETIME() AS DATE) OR
+           (available_date = CAST(SYSUTCDATETIME() AS DATE) AND available_time > CAST(SYSUTCDATETIME() AS TIME)))`,
       [request.user.id, date],
     );
     if (!result.affectedRows) {
       return response.status(409).json({ error: "That visit date is no longer available." });
     }
     const [rows] = await pool.execute(
-      `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(visit_time, '%H:%i') AS time FROM site_visits WHERE id = ?`,
+      `SELECT id, CONVERT(char(10), visit_date, 23) AS date,
+       CONVERT(char(5), visit_time, 108) AS time FROM site_visits WHERE id = ?`,
       [result.insertId],
     );
     response.status(201).json(rows[0]);
   } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
+    if (isDuplicateKeyError(error)) {
       return response.status(409).json({ error: "That visit date has already been booked." });
     }
     next(error);
@@ -786,7 +798,7 @@ router.delete("/site-visits/:id", requireAuthenticated, async (request, response
   }
   try {
     const [result] = await pool.execute(
-      "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= UTC_DATE()",
+      "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= CAST(SYSUTCDATETIME() AS DATE)",
       [id, request.user.id],
     );
     if (!result.affectedRows) {
@@ -801,10 +813,10 @@ router.delete("/site-visits/:id", requireAuthenticated, async (request, response
 router.get("/notices", requireStaff, async (_request, response, next) => {
   try {
     const [notices] = await pool.query(
-      `SELECT team_notices.id, team_notices.message, users.name AS author,
-       DATE_FORMAT(team_notices.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt
+      `SELECT TOP 20 team_notices.id, team_notices.message, users.name AS author,
+       CONVERT(char(19), team_notices.created_at, 120) AS createdAt
        FROM team_notices JOIN users ON users.id = team_notices.user_id
-       ORDER BY team_notices.created_at DESC LIMIT 20`,
+       ORDER BY team_notices.created_at DESC`,
     );
     response.json(notices);
   } catch (error) {
@@ -841,18 +853,18 @@ router.get("/donations", requireStaff, async (request, response, next) => {
   try {
     const [[stats]] = await pool.query(
       `SELECT
-        COALESCE(SUM(CASE WHEN status = 'Completed' AND created_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01') THEN amount ELSE 0 END), 0) AS monthTotal,
-        SUM(CASE WHEN status = 'Completed' AND created_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01') THEN 1 ELSE 0 END) AS monthCount,
+        COALESCE(SUM(CASE WHEN status = 'Completed' AND created_at >= DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1) THEN amount ELSE 0 END), 0) AS monthTotal,
+        SUM(CASE WHEN status = 'Completed' AND created_at >= DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1) THEN 1 ELSE 0 END) AS monthCount,
         COALESCE(AVG(CASE WHEN status = 'Completed' THEN amount END), 0) AS averageAmount
        FROM donations`,
     );
     const [monthlyRows] = await pool.query(
-      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS month,
+      `SELECT CONVERT(char(7), created_at, 120) AS month,
        SUM(amount) AS total
        FROM donations
        WHERE status = 'Completed'
-         AND created_at >= DATE_SUB(DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01'), INTERVAL 5 MONTH)
-       GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month`,
+         AND created_at >= DATEADD(month, -5, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1))
+       GROUP BY CONVERT(char(7), created_at, 120) ORDER BY month`,
     );
     const [[{ total }]] = await pool.query(
       "SELECT COUNT(*) AS total FROM donations",
@@ -860,9 +872,10 @@ router.get("/donations", requireStaff, async (request, response, next) => {
     const [rows] = await pool.execute(
       `SELECT id, payment_id AS paymentId, amount, donor_name AS donorName,
        category, payment_method AS paymentMethod, status,
-       DATE_FORMAT(created_at, '%d %b %Y') AS date
-       FROM donations ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-      [pageSize, (page - 1) * pageSize],
+       FORMAT(created_at, 'dd MMM yyyy', 'en-US') AS date
+       FROM donations ORDER BY donations.created_at DESC, id DESC
+       OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
+      [(page - 1) * pageSize, pageSize],
     );
     response.json({
       donations: rows,
@@ -1082,7 +1095,7 @@ router.post("/payments/payfast/notify", async (request, response, next) => {
       donation.status !== "Completed"
     ) {
       await pool.execute(
-        `UPDATE donations SET status = 'Completed', completed_at = UTC_TIMESTAMP()
+        `UPDATE donations SET status = 'Completed', completed_at = SYSUTCDATETIME()
          WHERE payment_id = ? AND status = 'Pending'`,
         [fields.m_payment_id],
       );
