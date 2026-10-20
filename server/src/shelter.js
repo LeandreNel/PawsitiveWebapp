@@ -21,23 +21,13 @@ function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-// server/src/shelter.js
-function setSessionCookie(response, token) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  const sameSite = process.env.NODE_ENV === "production" ? "None" : "Lax"; // Must be "None" in production for cross-domain
-  response.setHeader(
-    "Set-Cookie",
-    `pawsitive_session=${encodeURIComponent(token)}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${sessionDuration / 1000}${secure}`,
-  );
+function readCookie(request, name) {
+  const cookie = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`));
+  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : "";
 }
-
-// function readCookie(request, name) {
-//   const cookie = request.headers.cookie
-//     ?.split(";")
-//     .map((part) => part.trim())
-//     .find((part) => part.startsWith(`${name}=`));
-//   return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : "";
-// }
 
 // async function userFromSession(request) {
 //   const token = readCookie(request, "pawsitive_session");
@@ -452,8 +442,8 @@ router.patch(
         : null;
       await pool.execute(
         `UPDATE users SET name = ?, email = ?, password_hash = COALESCE(?, password_hash),
-       profile_image = IF(?, ?, profile_image),
-       profile_image_mime = IF(?, ?, profile_image_mime)
+       profile_image = CASE WHEN ? = 1 THEN ? ELSE profile_image END,
+       profile_image_mime = CASE WHEN ? = 1 THEN ? ELSE profile_image_mime END
        WHERE id = ?`,
         [
           name,
@@ -480,7 +470,7 @@ router.patch(
         },
       });
     } catch (error) {
-      if (error.code === "ER_DUP_ENTRY") {
+      if (isDuplicateKeyError(error)) {
         return response
           .status(409)
           .json({ error: "An account with that email already exists." });
@@ -830,9 +820,9 @@ router.get(
   async (request, response, next) => {
     try {
       const [rows] = await pool.execute(
-        `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(visit_time, '%H:%i') AS time
-       FROM site_visits WHERE user_id = ? AND visit_date >= UTC_DATE()
+        `SELECT id, CONVERT(char(10), visit_date, 23) AS date,
+       CONVERT(char(5), visit_time, 108) AS time
+       FROM site_visits WHERE user_id = ? AND visit_date >= CAST(SYSUTCDATETIME() AS DATE)
        ORDER BY visit_date`,
         [request.user.id],
       );
@@ -861,8 +851,8 @@ router.post(
         `INSERT INTO site_visits (user_id, visit_date, visit_time)
        SELECT ?, available_date, available_time FROM availability
        WHERE available_date = ? AND
-         (available_date > UTC_DATE() OR
-           (available_date = UTC_DATE() AND available_time > UTC_TIME()))`,
+         (available_date > CAST(SYSUTCDATETIME() AS DATE) OR
+           (available_date = CAST(SYSUTCDATETIME() AS DATE) AND available_time > CAST(SYSUTCDATETIME() AS TIME)))`,
         [request.user.id, date],
       );
       if (!result.affectedRows) {
@@ -871,13 +861,13 @@ router.post(
           .json({ error: "That visit date is no longer available." });
       }
       const [rows] = await pool.execute(
-        `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
-       TIME_FORMAT(visit_time, '%H:%i') AS time FROM site_visits WHERE id = ?`,
+        `SELECT id, CONVERT(char(10), visit_date, 23) AS date,
+       CONVERT(char(5), visit_time, 108) AS time FROM site_visits WHERE id = ?`,
         [result.insertId],
       );
       response.status(201).json(rows[0]);
     } catch (error) {
-      if (error.code === "ER_DUP_ENTRY") {
+      if (isDuplicateKeyError(error)) {
         return response
           .status(409)
           .json({ error: "That visit date has already been booked." });
@@ -897,7 +887,7 @@ router.delete(
     }
     try {
       const [result] = await pool.execute(
-        "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= UTC_DATE()",
+        "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= CAST(SYSUTCDATETIME() AS DATE)",
         [id, request.user.id],
       );
       if (!result.affectedRows) {
