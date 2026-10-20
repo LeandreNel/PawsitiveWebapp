@@ -22,6 +22,8 @@ Pawsitive is a shelter management and public adoption site built with React, Vit
 
 The API creates the required tables on startup and adds the starter animal listings only when the animal table is empty. Existing animal records are not overwritten.
 
+The client initializes Firebase and Firebase Analytics using the web app configuration in `client/src/firebase.js`. Analytics is enabled only in browsers where the Firebase SDK reports support.
+
 ## Working features
 
 - Public animal browsing and profiles; staff can add, remove, and mark animals as adopted.

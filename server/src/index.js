@@ -7,6 +7,7 @@ import shelterRouter from "./shelter.js";
 const app = express();
 // server/src/index.js
 const port = Number(process.env.PORT ?? 3001); // Azure injects process.env.PORT (8080)
+
 const statuses = new Set(["open", "in_progress", "done"]);
 const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
