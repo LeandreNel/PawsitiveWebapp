@@ -21,35 +21,45 @@ function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function readCookie(request, name) {
-  const cookie = request.headers.cookie
-    ?.split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`));
-  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : "";
+// server/src/shelter.js
+function setSessionCookie(response, token) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const sameSite = process.env.NODE_ENV === "production" ? "None" : "Lax"; // Must be "None" in production for cross-domain
+  response.setHeader(
+    "Set-Cookie",
+    `pawsitive_session=${encodeURIComponent(token)}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${sessionDuration / 1000}${secure}`,
+  );
 }
 
-async function userFromSession(request) {
-  const token = readCookie(request, "pawsitive_session");
-  if (!token) return null;
-  const [rows] = await pool.execute(
-    `SELECT users.id, users.name, users.email, users.role,
-       users.profile_image_mime IS NOT NULL AS hasProfileImage
-     FROM sessions JOIN users ON users.id = sessions.user_id
-     WHERE sessions.token_hash = ? AND sessions.expires_at > UTC_TIMESTAMP()`,
-    [hashToken(token)],
-  );
-  if (!rows[0]) return null;
-  return {
-    id: rows[0].id,
-    name: rows[0].name,
-    email: rows[0].email,
-    role: rows[0].role,
-    profileImageUrl: rows[0].hasProfileImage
-      ? "/api/auth/profile-image"
-      : null,
-  };
-}
+// function readCookie(request, name) {
+//   const cookie = request.headers.cookie
+//     ?.split(";")
+//     .map((part) => part.trim())
+//     .find((part) => part.startsWith(`${name}=`));
+//   return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : "";
+// }
+
+// async function userFromSession(request) {
+//   const token = readCookie(request, "pawsitive_session");
+//   if (!token) return null;
+//   const [rows] = await pool.execute(
+//     `SELECT users.id, users.name, users.email, users.role,
+//        users.profile_image_mime IS NOT NULL AS hasProfileImage
+//      FROM sessions JOIN users ON users.id = sessions.user_id
+//      WHERE sessions.token_hash = ? AND sessions.expires_at > UTC_TIMESTAMP()`,
+//     [hashToken(token)],
+//   );
+//   if (!rows[0]) return null;
+//   return {
+//     id: rows[0].id,
+//     name: rows[0].name,
+//     email: rows[0].email,
+//     role: rows[0].role,
+//     profileImageUrl: rows[0].hasProfileImage
+//       ? "/api/auth/profile-image"
+//       : null,
+//   };
+// }
 
 async function optionalUser(request, _response, next) {
   try {
@@ -141,15 +151,23 @@ function parseImageData(value) {
   if (typeof value !== "string") {
     return { error: "Choose a valid JPEG, PNG, or WebP image." };
   }
-  const match = value.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
+  const match = value.match(
+    /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/,
+  );
   if (!match || !imageMimeTypes.has(match[1])) {
     return { error: "Choose a valid JPEG, PNG, or WebP image." };
   }
   const encodedImage = match[2];
-  const padding = encodedImage.endsWith("==") ? 2 : encodedImage.endsWith("=") ? 1 : 0;
+  const padding = encodedImage.endsWith("==")
+    ? 2
+    : encodedImage.endsWith("=")
+      ? 1
+      : 0;
   const decodedSize = Math.floor((encodedImage.length * 3) / 4) - padding;
   if (!decodedSize || decodedSize > maxImageBytes) {
-    return { error: "Images must be optimized to 512 KB or smaller before upload." };
+    return {
+      error: "Images must be optimized to 512 KB or smaller before upload.",
+    };
   }
   const buffer = Buffer.from(encodedImage, "base64");
   if (buffer.toString("base64") !== encodedImage) {
@@ -163,12 +181,15 @@ function parseImageData(value) {
       buffer[2] === 0xff) ||
     (match[1] === "image/png" &&
       buffer.length >= 8 &&
-      buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) ||
+      buffer
+        .subarray(0, 8)
+        .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) ||
     (match[1] === "image/webp" &&
       buffer.length >= 12 &&
       buffer.toString("ascii", 0, 4) === "RIFF" &&
       buffer.toString("ascii", 8, 12) === "WEBP");
-  if (!validSignature) return { error: "The selected file does not match its image type." };
+  if (!validSignature)
+    return { error: "The selected file does not match its image type." };
   return { value: { data: match[2], mime: match[1] } };
 }
 
@@ -206,7 +227,8 @@ function validateAnimal(body) {
       description,
       status,
       imageKey: type === "Cat" ? "cat" : "dog",
-      imageData: image?.value?.data ?? (body.imageData === null ? null : undefined),
+      imageData:
+        image?.value?.data ?? (body.imageData === null ? null : undefined),
       imageMime: image?.value?.mime ?? null,
       imageChanged: body.imageData !== undefined,
     },
@@ -331,110 +353,149 @@ router.get("/auth/me", optionalUser, (request, response) => {
   response.json({ user: request.user });
 });
 
-router.get("/auth/profile-image", requireAuthenticated, async (request, response, next) => {
-  try {
-    const [rows] = await pool.execute(
-      "SELECT profile_image, profile_image_mime FROM users WHERE id = ?",
-      [request.user.id],
-    );
-    if (!rows[0]?.profile_image) {
-      return response.status(404).json({ error: "Profile picture not found." });
+router.get(
+  "/auth/profile-image",
+  requireAuthenticated,
+  async (request, response, next) => {
+    try {
+      const [rows] = await pool.execute(
+        "SELECT profile_image, profile_image_mime FROM users WHERE id = ?",
+        [request.user.id],
+      );
+      if (!rows[0]?.profile_image) {
+        return response
+          .status(404)
+          .json({ error: "Profile picture not found." });
+      }
+      response.set("Cache-Control", "private, no-store");
+      response.set("X-Content-Type-Options", "nosniff");
+      response.type(rows[0].profile_image_mime);
+      response.send(Buffer.from(rows[0].profile_image, "base64"));
+    } catch (error) {
+      next(error);
     }
-    response.set("Cache-Control", "private, no-store");
-    response.set("X-Content-Type-Options", "nosniff");
-    response.type(rows[0].profile_image_mime);
-    response.send(Buffer.from(rows[0].profile_image, "base64"));
-  } catch (error) {
-    next(error);
-  }
-});
+  },
+);
 
-router.patch("/auth/profile", requireAuthenticated, async (request, response, next) => {
-  const name = typeof request.body.name === "string" ? request.body.name.trim() : "";
-  const email = typeof request.body.email === "string" ? request.body.email.trim().toLowerCase() : "";
-  const currentPassword = request.body.currentPassword;
-  const newPassword = request.body.newPassword;
-  const profileImage =
-    request.body.profileImageData === undefined
-      ? undefined
-      : parseImageData(request.body.profileImageData);
-  if (!name || name.length > 120 || !validEmail(email)) {
-    return response.status(400).json({ error: "Enter a valid name and email address." });
-  }
-  if (typeof currentPassword !== "string" || !currentPassword) {
-    return response.status(400).json({ error: "Enter your current password to save profile changes." });
-  }
-  if (newPassword && (typeof newPassword !== "string" || newPassword.length < 10 || newPassword.length > 200)) {
-    return response.status(400).json({ error: "New password must be between 10 and 200 characters." });
-  }
-  if (profileImage?.error) {
-    return response.status(400).json({ error: profileImage.error });
-  }
-
-  try {
-    if (!(await verifyPassword(request.user.id, currentPassword))) {
-      return response.status(401).json({ error: "Your current password is incorrect." });
+router.patch(
+  "/auth/profile",
+  requireAuthenticated,
+  async (request, response, next) => {
+    const name =
+      typeof request.body.name === "string" ? request.body.name.trim() : "";
+    const email =
+      typeof request.body.email === "string"
+        ? request.body.email.trim().toLowerCase()
+        : "";
+    const currentPassword = request.body.currentPassword;
+    const newPassword = request.body.newPassword;
+    const profileImage =
+      request.body.profileImageData === undefined
+        ? undefined
+        : parseImageData(request.body.profileImageData);
+    if (!name || name.length > 120 || !validEmail(email)) {
+      return response
+        .status(400)
+        .json({ error: "Enter a valid name and email address." });
     }
-    const passwordHash = newPassword
-      ? await (async () => {
-          const salt = randomBytes(16).toString("hex");
-          const derived = await scrypt(newPassword, salt, 64);
-          return `${salt}:${derived.toString("hex")}`;
-        })()
-      : null;
-    await pool.execute(
-      `UPDATE users SET name = ?, email = ?, password_hash = COALESCE(?, password_hash),
+    if (typeof currentPassword !== "string" || !currentPassword) {
+      return response
+        .status(400)
+        .json({
+          error: "Enter your current password to save profile changes.",
+        });
+    }
+    if (
+      newPassword &&
+      (typeof newPassword !== "string" ||
+        newPassword.length < 10 ||
+        newPassword.length > 200)
+    ) {
+      return response
+        .status(400)
+        .json({ error: "New password must be between 10 and 200 characters." });
+    }
+    if (profileImage?.error) {
+      return response.status(400).json({ error: profileImage.error });
+    }
+
+    try {
+      if (!(await verifyPassword(request.user.id, currentPassword))) {
+        return response
+          .status(401)
+          .json({ error: "Your current password is incorrect." });
+      }
+      const passwordHash = newPassword
+        ? await (async () => {
+            const salt = randomBytes(16).toString("hex");
+            const derived = await scrypt(newPassword, salt, 64);
+            return `${salt}:${derived.toString("hex")}`;
+          })()
+        : null;
+      await pool.execute(
+        `UPDATE users SET name = ?, email = ?, password_hash = COALESCE(?, password_hash),
        profile_image = IF(?, ?, profile_image),
        profile_image_mime = IF(?, ?, profile_image_mime)
        WHERE id = ?`,
-      [
-        name,
-        email,
-        passwordHash,
-        profileImage !== undefined,
-        profileImage?.value?.data ?? null,
-        profileImage !== undefined,
-        profileImage?.value?.mime ?? null,
-        request.user.id,
-      ],
-    );
-    response.json({
-      user: {
-        ...request.user,
-        name,
-        email,
-        profileImageUrl:
-          profileImage === undefined
-            ? request.user.profileImageUrl
-            : profileImage.value
-              ? "/api/auth/profile-image"
-              : null,
-      },
-    });
-  } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
-      return response.status(409).json({ error: "An account with that email already exists." });
+        [
+          name,
+          email,
+          passwordHash,
+          profileImage !== undefined,
+          profileImage?.value?.data ?? null,
+          profileImage !== undefined,
+          profileImage?.value?.mime ?? null,
+          request.user.id,
+        ],
+      );
+      response.json({
+        user: {
+          ...request.user,
+          name,
+          email,
+          profileImageUrl:
+            profileImage === undefined
+              ? request.user.profileImageUrl
+              : profileImage.value
+                ? "/api/auth/profile-image"
+                : null,
+        },
+      });
+    } catch (error) {
+      if (error.code === "ER_DUP_ENTRY") {
+        return response
+          .status(409)
+          .json({ error: "An account with that email already exists." });
+      }
+      next(error);
     }
-    next(error);
-  }
-});
+  },
+);
 
-router.delete("/auth/me", requireAuthenticated, async (request, response, next) => {
-  if (request.user.role === "staff") {
-    return response.status(403).json({ error: "Staff accounts cannot be deleted here." });
-  }
-  const password = request.body?.password;
-  if (!(await verifyPassword(request.user.id, password))) {
-    return response.status(401).json({ error: "Your password is incorrect." });
-  }
-  try {
-    await pool.execute("DELETE FROM users WHERE id = ?", [request.user.id]);
-    clearSessionCookie(response);
-    response.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
+router.delete(
+  "/auth/me",
+  requireAuthenticated,
+  async (request, response, next) => {
+    if (request.user.role === "staff") {
+      return response
+        .status(403)
+        .json({ error: "Staff accounts cannot be deleted here." });
+    }
+    const password = request.body?.password;
+    if (!(await verifyPassword(request.user.id, password))) {
+      return response
+        .status(401)
+        .json({ error: "Your password is incorrect." });
+    }
+    try {
+      await pool.execute("DELETE FROM users WHERE id = ?", [request.user.id]);
+      clearSessionCookie(response);
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.post("/auth/logout", async (request, response, next) => {
   try {
@@ -465,28 +526,32 @@ router.get("/animals", optionalUser, async (request, response, next) => {
   }
 });
 
-router.get("/animals/:id/image", optionalUser, async (request, response, next) => {
-  const id = Number(request.params.id);
-  if (!Number.isSafeInteger(id) || id < 1) {
-    return response.status(400).json({ error: "Invalid animal ID." });
-  }
-  try {
-    const [rows] = await pool.execute(
-      `SELECT image_data, image_mime FROM animals
-       WHERE id = ? AND (status = 'Available' OR ?)`,
-      [id, request.user?.role === "staff"],
-    );
-    if (!rows[0]?.image_data) {
-      return response.status(404).json({ error: "Animal image not found." });
+router.get(
+  "/animals/:id/image",
+  optionalUser,
+  async (request, response, next) => {
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return response.status(400).json({ error: "Invalid animal ID." });
     }
-    response.set("Cache-Control", "public, max-age=3600");
-    response.set("X-Content-Type-Options", "nosniff");
-    response.type(rows[0].image_mime);
-    response.send(Buffer.from(rows[0].image_data, "base64"));
-  } catch (error) {
-    next(error);
-  }
-});
+    try {
+      const [rows] = await pool.execute(
+        `SELECT image_data, image_mime FROM animals
+       WHERE id = ? AND (status = 'Available' OR ?)`,
+        [id, request.user?.role === "staff"],
+      );
+      if (!rows[0]?.image_data) {
+        return response.status(404).json({ error: "Animal image not found." });
+      }
+      response.set("Cache-Control", "public, max-age=3600");
+      response.set("X-Content-Type-Options", "nosniff");
+      response.type(rows[0].image_mime);
+      response.send(Buffer.from(rows[0].image_data, "base64"));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.post("/animals", requireStaff, async (request, response, next) => {
   const result = validateAnimal(request.body ?? {});
@@ -730,73 +795,91 @@ router.get("/site-visits", requireStaff, async (_request, response, next) => {
   }
 });
 
-router.get("/site-visits/mine", requireAuthenticated, async (request, response, next) => {
-  try {
-    const [rows] = await pool.execute(
-      `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
+router.get(
+  "/site-visits/mine",
+  requireAuthenticated,
+  async (request, response, next) => {
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
        TIME_FORMAT(visit_time, '%H:%i') AS time
        FROM site_visits WHERE user_id = ? AND visit_date >= UTC_DATE()
        ORDER BY visit_date`,
-      [request.user.id],
-    );
-    response.json(rows);
-  } catch (error) {
-    next(error);
-  }
-});
+        [request.user.id],
+      );
+      response.json(rows);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-router.post("/site-visits", requireAuthenticated, async (request, response, next) => {
-  const date = request.body.date;
-  if (!validateDate(date)) {
-    return response.status(400).json({ error: "Choose a valid visit date." });
-  }
-  if (request.user.role !== "user") {
-    return response.status(403).json({ error: "Only public accounts can book site visits." });
-  }
-  try {
-    const [result] = await pool.execute(
-      `INSERT INTO site_visits (user_id, visit_date, visit_time)
+router.post(
+  "/site-visits",
+  requireAuthenticated,
+  async (request, response, next) => {
+    const date = request.body.date;
+    if (!validateDate(date)) {
+      return response.status(400).json({ error: "Choose a valid visit date." });
+    }
+    if (request.user.role !== "user") {
+      return response
+        .status(403)
+        .json({ error: "Only public accounts can book site visits." });
+    }
+    try {
+      const [result] = await pool.execute(
+        `INSERT INTO site_visits (user_id, visit_date, visit_time)
        SELECT ?, available_date, available_time FROM availability
        WHERE available_date = ? AND
          (available_date > UTC_DATE() OR
            (available_date = UTC_DATE() AND available_time > UTC_TIME()))`,
-      [request.user.id, date],
-    );
-    if (!result.affectedRows) {
-      return response.status(409).json({ error: "That visit date is no longer available." });
-    }
-    const [rows] = await pool.execute(
-      `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
+        [request.user.id, date],
+      );
+      if (!result.affectedRows) {
+        return response
+          .status(409)
+          .json({ error: "That visit date is no longer available." });
+      }
+      const [rows] = await pool.execute(
+        `SELECT id, DATE_FORMAT(visit_date, '%Y-%m-%d') AS date,
        TIME_FORMAT(visit_time, '%H:%i') AS time FROM site_visits WHERE id = ?`,
-      [result.insertId],
-    );
-    response.status(201).json(rows[0]);
-  } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
-      return response.status(409).json({ error: "That visit date has already been booked." });
+        [result.insertId],
+      );
+      response.status(201).json(rows[0]);
+    } catch (error) {
+      if (error.code === "ER_DUP_ENTRY") {
+        return response
+          .status(409)
+          .json({ error: "That visit date has already been booked." });
+      }
+      next(error);
     }
-    next(error);
-  }
-});
+  },
+);
 
-router.delete("/site-visits/:id", requireAuthenticated, async (request, response, next) => {
-  const id = Number(request.params.id);
-  if (!Number.isSafeInteger(id) || id < 1) {
-    return response.status(400).json({ error: "Invalid visit booking." });
-  }
-  try {
-    const [result] = await pool.execute(
-      "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= UTC_DATE()",
-      [id, request.user.id],
-    );
-    if (!result.affectedRows) {
-      return response.status(404).json({ error: "Visit booking not found." });
+router.delete(
+  "/site-visits/:id",
+  requireAuthenticated,
+  async (request, response, next) => {
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return response.status(400).json({ error: "Invalid visit booking." });
     }
-    response.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
+    try {
+      const [result] = await pool.execute(
+        "DELETE FROM site_visits WHERE id = ? AND user_id = ? AND visit_date >= UTC_DATE()",
+        [id, request.user.id],
+      );
+      if (!result.affectedRows) {
+        return response.status(404).json({ error: "Visit booking not found." });
+      }
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.get("/notices", requireStaff, async (_request, response, next) => {
   try {
