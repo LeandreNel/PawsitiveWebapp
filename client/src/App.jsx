@@ -20,6 +20,10 @@ import committeeFour from "./img/committeeFour.png";
 import committeeFive from "./img/committeeFive.png";
 import { api, apiUrl } from "./api.js";
 
+ReactGA.initialize("G-VVHG40BFXW", {
+  gtagOptions: { send_page_view: false },
+});
+
 const shelterEmail = "pawsitivesa@gmail.com";
 const facilityPhotos = [landOne, landTwo, landThree, landFour];
 const directorPhotos = [directorOne, directorTwo, directorThree];
