@@ -1,47 +1,195 @@
 # Pawsitive
 
-Pawsitive is a shelter management and public adoption site built with React, Vite, Express, and Azure SQL Database (SQL Server). Animal records, staff accounts, events, availability, team notices, and donation records are stored in the database. Staff actions are checked by the API; a browser-side role switch is not used for access control.
+**Finding furry friends their forever homes, one wagging tail at a time.**
 
-## Requirements
+Pawsitive is a shelter management and public adoption site for the Pawsitive Animal Shelter in Laezonia AH. Visitors can meet the animals waiting for a home, book a site visit, and donate. Shelter staff get a cosy back office for animal records, calendar events, team notices, and donation reports.
 
+Everything lives in a real database, and every staff action is checked by the API. No browser-side role switches here, just proper permissions.
+
+---
+
+## Live Sites
+
+Pawsitive's front end is deployed in two places:
+
+| Host | Platform | Link |
+| --- | --- | --- |
+| Microsoft Azure | Azure Static Web Apps | [https://orange-flower-07d52f21e.2.azurestaticapps.net](https://orange-flower-07d52f21e.2.azurestaticapps.net/) |
+| Google Cloud | Firebase Hosting | [https://project-d970a4c5-3b03-4517-b3b.web.app](https://project-d970a4c5-3b03-4517-b3b.web.app/) |
+
+The API and database run on Azure (Express service and Azure SQL Database), and both front ends talk to it.
+
+---
+
+## Built With
+
+Pawsitive was put together with these tools:
+
+| Part of the app | What we used |
+| --- | --- |
+| Front end | React 19 and Vite 7 |
+| Back end | Node.js (20.19+ or 22.12+) and Express 5 |
+| Database | Azure SQL Database (or SQL Server 2017+) through the `mssql` driver |
+| Passwords and sessions | Node's built-in `crypto` module (scrypt hashing, SHA-256 hashed session tokens, HTTP-only cookies) |
+| Payments | PayFast hosted checkout with signed requests and validated ITN notifications |
+| Analytics and hosting | Firebase (Analytics and Firebase Hosting) |
+| Alternative hosting | Azure Static Web Apps, deployed with GitHub Actions |
+| Containers | Docker (`node:22-alpine`) for the API |
+| Dev tooling | npm workspaces, `concurrently`, `dotenv`, and `cors` |
+| Typography | GROBOLD for headings, system sans-serif everywhere else |
+
+---
+
+## What You Can Do
+
+### Visitors
+- Browse available animals and read their profiles
+- Create an account and sign in securely
+- Update your name, email, password, and profile picture
+- Delete your account (after confirming your password)
+- Book a site visit from dates and times published by staff
+- Donate through PayFast
+- Send an adoption enquiry by email with your chosen animal already included
+
+### Shelter Staff
+- Add, edit, remove, and mark animals as adopted
+- Attach or replace animal photos
+- Publish calendar availability for site visits
+- Schedule medical, supply, and general events
+- Share team notices
+- View donation summaries and history, and export a CSV report of confirmed payments
+- See upcoming site visit bookings
+
+Photos can be JPEG, PNG, or WebP up to 2 MB. The browser shrinks them to fit the 512 KB database limit before upload.
+
+---
+
+## Getting Started
+
+### What you need
 - Node.js 20.19+ or 22.12+
-- Azure SQL Database (the free offer works) or SQL Server 2017+
+- An Azure SQL Database (the free offer works) or SQL Server 2017+
 
-## Run locally
+### Setup
 
-1. Create a database named `pawsitive` (in Azure: SQL databases → Create, choose the free offer). In the server's **Networking** settings, allow Azure services to access the server, and add your own client IP if you run the API locally against it.
+1. **Create a database** named `pawsitive`. In Azure, go to SQL databases, then Create, and choose the free offer. In the server's Networking settings, allow Azure services to access the server, and add your own client IP if you run the API locally.
 
-2. Copy `server/.env.example` to `server/.env` and set the real database credentials (the example password is only a placeholder). To provision the staff account, set `INITIAL_STAFF_NAME`, `INITIAL_STAFF_EMAIL`, and a unique `INITIAL_STAFF_PASSWORD` of at least 12 characters. The password is hashed before it is stored. Restart the API after changing these values; on startup, the configured email is assigned the staff role and its password is reset to the configured password, even if that email was previously registered as a public account.
-3. Install dependencies from the repository root with `npm install`.
-4. Run `npm run dev` from the repository root. This starts the API at `http://localhost:3001` and Vite at `http://localhost:5173`.
-5. Create public accounts using **Create a new account**. Public registration cannot grant staff access. Staff sign in with the provisioned staff credentials.
+2. **Configure the server.** Copy `server/.env.example` to `server/.env` and fill in your real database details. To create the first staff account, set:
+   - `INITIAL_STAFF_NAME`
+   - `INITIAL_STAFF_EMAIL`
+   - `INITIAL_STAFF_PASSWORD` (at least 12 characters, and it is hashed before it is stored)
 
-The API creates the required tables on startup and adds the starter animal listings only when the animal table is empty. Existing animal records are not overwritten.
+   On startup, the configured email is given the staff role and its password is set to the configured one, even if that email was already registered as a public account. Restart the API after changing these values.
 
-## Working features
+3. **Install dependencies** from the repository root:
+   ```bash
+   npm install
+   ```
 
-- Public animal browsing and profiles; staff can add, remove, and mark animals as adopted.
-- Account creation and sign-in with server-side password hashing, HTTP-only sessions, and staff-only API authorization.
-- Signed-in public users can update their name, email, or password and permanently delete their account after password confirmation.
-- Staff can attach or replace animal photos while editing animal profiles; staff and public users can upload or remove their own profile pictures. Selected JPEG, PNG, and WebP files up to 2 MB are optimized in the browser to fit the database's 512 KB image limit.
-- Signed-in users have a separate home, adopt, donate, and calendar portal. Site visits can be booked from future dates and times published by staff in calendar availability.
-- Staff calendar events, date availability, and team notices stored in the database.
-- Donation summaries, history pagination, and CSV report export based on confirmed payments.
-- Hosted PayFast checkout. Set `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`, `PAYFAST_SANDBOX`, and `PUBLIC_SITE_URL` in the server environment. For a separately hosted API, set `PUBLIC_API_URL` as well. The PayFast ITN/notification URL must be publicly reachable over HTTPS; localhost alone cannot receive provider callbacks. Test with sandbox credentials before switching to live credentials.
-- Adoption enquiries open an email addressed to the shelter with the selected animal included.
+4. **Start everything:**
+   ```bash
+   npm run dev
+   ```
+   The API runs at `http://localhost:3001` and the site at `http://localhost:5173`.
 
-Never put database or PayFast credentials in the client environment or source code. Configure production secrets through the hosting provider. Use HTTPS in production.
+5. **Say hello.** Create a public account with **Create a new account**, or sign in with your staff credentials. Public sign-up can never grant staff access.
 
-## API
+On first launch the API creates all the tables it needs. If the animal table is empty, it also welcomes four starter residents: Baxter, Bruno, Snuggy, and Milo. Existing animal records are never overwritten.
 
-- `GET /api/health` checks the API and database.
-- `GET /api/animals` lists available animals publicly and all animals to staff.
-- `/api/auth/*` supports account creation, sign-in, session inspection, sign-out, authenticated profile updates, and password-confirmed account deletion.
-- `/api/site-visits/*` lists public availability, allows users to view/book/cancel their own visits, and lets staff see upcoming bookings.
-- Staff-only endpoints under `/api/animals`, `/api/events`, `/api/availability`, `/api/notices`, and `/api/donations` manage shelter data. Animal and profile photo uploads accept JPEG, PNG, and WebP images up to 512 KB after optimization.
-- `POST /api/donations/checkout` creates a pending donation and returns a signed PayFast checkout form.
-- `POST /api/payments/payfast/notify` validates PayFast notifications before marking payments complete.
+---
 
-## Build and deployment
+## Environment Variables
 
-Run `npm run build` to create the frontend in `client/dist`; run `npm start` to start the API. Firebase Hosting is configured for the client and uses the `pawsitiveWebapp` alias for the Firebase project. Deploy with `firebase deploy --project pawsitiveWebapp`. This deploys only the frontend; sign-in and other API-backed features require a deployed Express API and `VITE_API_URL` configured before building. In production, route `/api` to the Express service (or configure `VITE_API_URL` before building), set `CORS_ORIGIN` to the comma-separated frontend origins allowed to access the API, provide database and PayFast credentials via server secrets, and use a publicly reachable HTTPS URL for PayFast notifications.
+All of these live in `server/.env`.
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | API port (defaults to 3001) |
+| `CORS_ORIGIN` | Comma-separated list of frontend origins allowed to call the API |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Database connection details |
+| `DB_TRUST_SERVER_CERTIFICATE` | Set to `true` only for a local SQL Server with a self-signed certificate |
+| `INITIAL_STAFF_NAME`, `INITIAL_STAFF_EMAIL`, `INITIAL_STAFF_PASSWORD` | First staff account |
+| `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE` | PayFast credentials |
+| `PAYFAST_SANDBOX` | `true` while testing, `false` for live payments |
+| `PUBLIC_SITE_URL` | Public address of the frontend |
+| `PUBLIC_API_URL` | Public address of the API, if hosted separately |
+
+The client only needs `VITE_API_URL` (in `client/.env`), and only when the API lives on a different address from the site.
+
+Never put database or PayFast credentials in the client environment or in source code. Use your hosting provider's secret storage in production, and always use HTTPS.
+
+---
+
+## Taking Donations
+
+Donations use PayFast hosted checkout. The notification (ITN) URL must be publicly reachable over HTTPS, so localhost alone cannot receive callbacks from PayFast. Test with sandbox credentials first, then switch to live ones when you are ready.
+
+Donations are recorded as pending, then marked complete only after the API validates PayFast's signed notification. Reports and totals count confirmed payments only.
+
+---
+
+## API at a Glance
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/health` | Checks the API and database |
+| `GET /api/animals` | Lists available animals to everyone, and all animals to staff |
+| `/api/auth/*` | Sign-up, sign-in, session check, sign-out, profile updates, and account deletion |
+| `/api/site-visits/*` | Public availability, plus booking and cancelling your own visits (staff can see upcoming bookings) |
+| `/api/animals`, `/api/events`, `/api/availability`, `/api/notices`, `/api/donations` | Staff-only management endpoints |
+| `POST /api/donations/checkout` | Creates a pending donation and returns a signed PayFast form |
+| `POST /api/payments/payfast/notify` | Validates PayFast notifications before completing a payment |
+
+---
+
+## Project Layout
+
+```
+pawsitive/
+  client/            React + Vite front end
+    public/fonts/    Custom heading font
+    src/             App code, API helper, Firebase setup
+  server/            Express API
+    src/db.js        Database connection, tables, and starter data
+    src/shelter.js   Auth, animals, events, visits, notices, donations, payments
+    src/index.js     Server entry point
+    Dockerfile       Container image for the API
+  .github/workflows/ Deployment pipelines
+  firebase.json      Firebase Hosting configuration
+```
+
+---
+
+## Building and Deploying
+
+Build the front end into `client/dist`:
+
+```bash
+npm run build
+```
+
+Start the API:
+
+```bash
+npm start
+```
+
+**Front end.** Deploy to Firebase Hosting with:
+
+```bash
+firebase deploy --project pawsitiveWebapp
+```
+
+The front end can also be deployed to Azure Static Web Apps through the included GitHub Actions workflow.
+
+**API.** The included Dockerfile builds a small production image of the Express service. In production:
+- Route `/api` to the Express service, or set `VITE_API_URL` before building the client
+- Set `CORS_ORIGIN` to the frontend origins that are allowed to call the API
+- Provide database and PayFast credentials as server secrets
+- Use a publicly reachable HTTPS address for PayFast notifications
+
+The front end alone cannot sign anyone in. Sign-in and every other API-backed feature need the Express API to be deployed too.
+
+---
+
+Made with care for every wet nose and warm lap waiting to be adopted.
